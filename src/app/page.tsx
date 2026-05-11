@@ -1,169 +1,181 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
-import Sidebar from '@/components/Sidebar'
-import TodayCountCard from '@/components/TodayCountCard'
-import StaffUsageCard from '@/components/StaffUsageCard'
-import CategoryCard from '@/components/CategoryCard'
-import ManualSearch from '@/components/ManualSearch'
-import RecentLogsCard from '@/components/RecentLogsCard'
-import { CardSkeleton } from '@/components/ui/Skeleton'
-import { supabase } from '@/lib/supabase'
-import type { StaffUsage, CategoryUsage, Staff } from '@/types'
+import { useState, useEffect, useCallback } from 'react'
+import { supabase, type Staff, type Manual } from '@/lib/supabase'
+import {
+  User, Search, ChevronDown, FileText, AlignLeft,
+  AlignJustify, Lock, Star, Inbox, Shield, Loader2, Brain,
+} from 'lucide-react'
 
-/**
- * JST の「今日 00:00:00」を UTC の ISO 文字列で返す
- *
- * 現在時刻が JST 2026-05-11 02:36 の場合:
- *   → JST 今日の開始 = 2026-05-11 00:00 JST
- *   → UTC に変換    = 2026-05-10 15:00 UTC
- *   → この値以降のデータが「今日」
- */
-function getJSTTodayStartUTC(): string {
-  const now = new Date()
-  // UTC時刻にJSTオフセット(+9h)を足してJSTの「今」を得る
-  const jstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000)
-  // JSTの年月日だけ取り出して「JST 00:00:00」を作る
-  const jstMidnight = new Date(Date.UTC(
-    jstNow.getUTCFullYear(),
-    jstNow.getUTCMonth(),
-    jstNow.getUTCDate(),
-    0, 0, 0, 0
-  ))
-  // JST 00:00 → UTC は -9h
-  const utcStart = new Date(jstMidnight.getTime() - 9 * 60 * 60 * 1000)
-  console.log('[getJSTTodayStartUTC]', {
-    jstNow: jstNow.toISOString(),
-    jstMidnight: jstMidnight.toISOString(),
-    utcStart: utcStart.toISOString(),
-  })
-  return utcStart.toISOString()
+function CardSkeleton() {
+  return (
+    <div className="glass-card rounded-3xl p-5 space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="skeleton w-9 h-9 rounded-xl" />
+        <div className="space-y-2 flex-1">
+          <div className="skeleton h-4 w-40" />
+          <div className="skeleton h-3 w-20" />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <div className="skeleton h-3 w-full" />
+        <div className="skeleton h-3 w-4/5" />
+      </div>
+    </div>
+  )
 }
 
-export default function HomePage() {
-  const [todayCount,     setTodayCount]     = useState(0)
-  const [staffCounts,    setStaffCounts]    = useState<StaffUsage[]>([])
-  const [categoryCounts, setCategoryCounts] = useState<CategoryUsage[]>([])
-  const [hourlyData,     setHourlyData]     = useState<{ hour: number; count: number }[]>([])
-  const [staffs,         setStaffs]         = useState<Staff[]>([])
-  const [loading,        setLoading]        = useState(true)
+function ManualCard({ manual, index }: { manual: Manual; index: number }) {
+  return (
+    <div className="glass-card result-card-glow rounded-3xl overflow-hidden animate-slide-up" style={{ animationDelay: `${index * 60}ms` }}>
+      <div className="px-5 pt-5 pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(180,130,30,0.3) 0%, rgba(212,168,67,0.15) 100%)', border: '1px solid rgba(212,168,67,0.25)' }}>
+              <FileText size={16} style={{ color: '#D4A843' }} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-[15px] leading-tight truncate" style={{ color: '#F5F0E8' }}>{manual.title}</h3>
+              {manual.category && <div className="mt-1.5"><span className="gold-badge text-[10px] font-medium px-2 py-0.5 rounded-full">{manual.category}</span></div>}
+            </div>
+          </div>
+          <button className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full" style={{ color: 'rgba(212,168,67,0.4)' }}><Star size={16} /></button>
+        </div>
+      </div>
+      <div className="gold-divider mx-5" />
+      <div className="px-5 py-4 space-y-4">
+        <div>
+          <div className="flex items-center gap-1.5 mb-2"><AlignLeft size={12} style={{ color: '#D4A843' }} /><span className="text-[11px] font-semibold tracking-wider" style={{ color: '#D4A843' }}>本文</span></div>
+          <p className="text-[13px] leading-relaxed" style={{ color: 'rgba(245,240,232,0.8)' }}>{manual.content}</p>
+        </div>
+        {manual.memo && <><div className="gold-divider" /><div><div className="flex items-center gap-1.5 mb-2"><AlignJustify size={12} style={{ color: '#D4A843' }} /><span className="text-[11px] font-semibold tracking-wider" style={{ color: '#D4A843' }}>補足メモ</span></div><p className="text-[13px] leading-relaxed" style={{ color: 'rgba(245,240,232,0.7)' }}>{manual.memo}</p></div></>}
+      </div>
+    </div>
+  )
+}
 
-  const fetchTodayStats = useCallback(async () => {
-    const todayStartUTC = getJSTTodayStartUTC()
+function EmptyState() {
+  return (
+    <div className="glass-card rounded-3xl px-5 py-10 flex flex-col items-center justify-center animate-fade-in">
+      <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'rgba(212,168,67,0.06)', border: '1px solid rgba(212,168,67,0.12)' }}>
+        <Inbox size={22} style={{ color: 'rgba(212,168,67,0.4)' }} />
+      </div>
+      <p className="text-[15px] font-medium mb-1.5" style={{ color: 'rgba(245,240,232,0.7)' }}>該当マニュアルが見つかりませんでした</p>
+      <p className="text-[12px] text-center" style={{ color: 'rgba(245,240,232,0.35)' }}>キーワードを変えて検索してみてください。</p>
+    </div>
+  )
+}
 
-    const { data, error } = await supabase
-      .from('logs')
-      .select('staff_name, category, created_at')
-      .gte('created_at', todayStartUTC)
-
-    if (error) { console.error('[fetchTodayStats] error:', error); return }
-    const logs = data ?? []
-    console.log('[fetchTodayStats] today count:', logs.length)
-    setTodayCount(logs.length)
-
-    // スタッフ別
-    const staffMap: Record<string, number> = {}
-    for (const r of logs) {
-      const n = r.staff_name ?? '不明'
-      staffMap[n] = (staffMap[n] ?? 0) + 1
-    }
-    setStaffCounts(
-      Object.entries(staffMap)
-        .map(([staff_name, count]) => ({ staff_name, count }))
-        .sort((a, b) => b.count - a.count).slice(0, 5)
-    )
-
-    // カテゴリ別
-    const catMap: Record<string, number> = {}
-    for (const r of logs) {
-      const c = r.category ?? 'その他'
-      catMap[c] = (catMap[c] ?? 0) + 1
-    }
-    const total = Object.values(catMap).reduce((a, b) => a + b, 0)
-    setCategoryCounts(
-      Object.entries(catMap)
-        .map(([category, count]) => ({
-          category, count,
-          percentage: total > 0 ? Math.round(count / total * 1000) / 10 : 0
-        }))
-        .sort((a, b) => b.count - a.count)
-    )
-
-    // 時間別（JST換算 0〜23時）
-    const hourMap: Record<number, number> = {}
-    for (let h = 0; h <= 23; h++) hourMap[h] = 0
-    for (const r of logs) {
-      const jstH = (new Date(r.created_at).getUTCHours() + 9) % 24
-      hourMap[jstH] = (hourMap[jstH] ?? 0) + 1
-    }
-    setHourlyData(
-      Object.entries(hourMap)
-        .map(([h, c]) => ({ hour: Number(h), count: c }))
-        .sort((a, b) => a.hour - b.hour)
-    )
-  }, [])
-
-  const fetchStaffs = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('staffs').select('id, name, is_active, created_at')
-      .eq('is_active', true).order('name')
-    if (error) { console.error('[fetchStaffs] error:', error); return }
-    setStaffs(data ?? [])
-  }, [])
-
-  const fetchTodayStatsRef = useRef(fetchTodayStats)
-  useEffect(() => { fetchTodayStatsRef.current = fetchTodayStats }, [fetchTodayStats])
-
-  const handleSearchComplete = useCallback(() => {
-    fetchTodayStatsRef.current()
-    setTimeout(() => fetchTodayStatsRef.current(), 1000)
-  }, [])
+export default function Home() {
+  const [staffs, setStaffs] = useState<Staff[]>([])
+  const [selectedStaff, setSelectedStaff] = useState<string>('')
+  const [query, setQuery] = useState<string>('')
+  const [manuals, setManuals] = useState<Manual[]>([])
+  const [loading, setLoading] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const [staffLoading, setStaffLoading] = useState(true)
 
   useEffect(() => {
-    const init = async () => {
-      setLoading(true)
-      await Promise.all([fetchTodayStats(), fetchStaffs()])
-      setLoading(false)
+    async function fetchStaffs() {
+      setStaffLoading(true)
+      const { data, error } = await supabase.from('staffs').select('id, name, is_active, created_at').eq('is_active', true).order('name')
+      if (!error && data) setStaffs(data as Staff[])
+      setStaffLoading(false)
     }
-    init()
-    const timer = setInterval(() => fetchTodayStatsRef.current(), 30_000)
-    return () => clearInterval(timer)
-  }, [fetchTodayStats, fetchStaffs])
+    fetchStaffs()
+  }, [])
 
-  const staffTotal = staffCounts.reduce((sum, s) => sum + s.count, 0)
+  const handleSearch = useCallback(async () => {
+    if (!selectedStaff || !query.trim()) return
+    setLoading(true)
+    setSearched(false)
+    try {
+      const { data, error } = await supabase.from('manuals').select('*').or(`title.ilike.%${query.trim()}%,content.ilike.%${query.trim()}%`).order('created_at', { ascending: false })
+      if (!error && data) setManuals(data as Manual[])
+      else setManuals([])
+      setSearched(true)
+      const staffObj = staffs.find(s => s.id === selectedStaff)
+      if (staffObj) {
+        const firstResult = data?.[0] as Manual | undefined
+        await supabase.from('logs').insert({ staff_name: staffObj.name, question: query.trim(), category: firstResult?.category ?? null, answer: firstResult?.content ?? null })
+      }
+    } catch { setManuals([]); setSearched(true) }
+    finally { setLoading(false) }
+  }, [selectedStaff, query, staffs])
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && selectedStaff && query.trim()) handleSearch()
+  }
+
+  const isSearchable = !!selectedStaff && !!query.trim()
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg-base)' }}>
-      <div className="fixed inset-0 pointer-events-none overflow-hidden" style={{ zIndex: 0 }}>
-        <div className="absolute top-0 left-1/4 w-96 h-96 rounded-full blur-3xl"
-          style={{ background: 'radial-gradient(circle, #d4a843 0%, transparent 70%)', opacity: 0.03 }} />
-        <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full blur-3xl"
-          style={{ background: 'radial-gradient(circle, #d4a843 0%, transparent 70%)', opacity: 0.025 }} />
+    <div className="relative min-h-screen">
+      <div className="fixed inset-0 z-0">
+        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at 20% 20%, rgba(80, 50, 10, 0.4) 0%, transparent 50%), radial-gradient(ellipse at 80% 60%, rgba(60, 35, 8, 0.35) 0%, transparent 50%), linear-gradient(180deg, #1a0f04 0%, #0f0804 30%, #0a0603 60%, #080503 100%)' }} />
+        <div className="absolute top-0 left-1/4 w-96 h-96 rounded-full opacity-[0.06]" style={{ background: 'radial-gradient(circle, #D4A843 0%, transparent 70%)' }} />
       </div>
-      <div className="relative flex w-full" style={{ zIndex: 1 }}>
-        <Sidebar />
-        {loading ? (
-          <main className="flex-1 overflow-y-auto p-6 lg:p-8">
-            <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-              <CardSkeleton /><CardSkeleton /><CardSkeleton />
+      <div className="relative z-10 mx-auto max-w-[430px] min-h-screen px-4 pb-24 pt-safe">
+        <div className="pt-14 pb-8 text-center">
+          <div className="flex items-center justify-center gap-2.5 mb-4">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(180,130,30,0.3) 0%, rgba(212,168,67,0.15) 100%)', border: '1px solid rgba(212,168,67,0.3)', boxShadow: '0 0 20px rgba(212,168,67,0.1)' }}>
+              <Brain size={18} style={{ color: '#D4A843' }} />
             </div>
-            <div className="grid gap-5" style={{ gridTemplateColumns: '1fr 1.6fr' }}>
-              <CardSkeleton /><CardSkeleton />
+            <span className="text-[15px] font-semibold tracking-widest" style={{ background: 'linear-gradient(135deg, #C89830 0%, #D4A843 50%, #F0C060 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>KOGI Brain</span>
+          </div>
+          <h1 className="text-[26px] font-bold tracking-tight mb-2" style={{ color: '#F5F0E8' }}>店舗マニュアル検索</h1>
+          <p className="text-[13px] font-light tracking-widest" style={{ color: '#D4A843' }}>わからないことをすぐ確認</p>
+        </div>
+
+        <div className="glass-card rounded-3xl p-5 mb-4">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.2)' }}><User size={13} style={{ color: '#D4A843' }} /></div>
+            <span className="text-[13px] font-semibold" style={{ color: 'rgba(245,240,232,0.9)' }}>あなたの名前を選択</span>
+          </div>
+          <div className="relative">
+            <select className="custom-select w-full rounded-2xl px-4 py-3.5 text-[14px] pr-10 transition-all" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(212,168,67,0.2)', color: selectedStaff ? '#F5F0E8' : 'rgba(245,240,232,0.35)', appearance: 'none', WebkitAppearance: 'none' }} value={selectedStaff} onChange={e => setSelectedStaff(e.target.value)} disabled={staffLoading}>
+              <option value="" disabled style={{ background: '#1a0f04', color: 'rgba(245,240,232,0.4)' }}>{staffLoading ? '読み込み中...' : 'スタッフ名を選択してください'}</option>
+              {staffs.map(staff => <option key={staff.id} value={staff.id} style={{ background: '#1a0f04', color: '#F5F0E8' }}>{staff.name}</option>)}
+            </select>
+            <div className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2">
+              {staffLoading ? <Loader2 size={14} style={{ color: 'rgba(212,168,67,0.5)' }} className="animate-spin" /> : <ChevronDown size={14} style={{ color: 'rgba(212,168,67,0.6)' }} />}
             </div>
-          </main>
-        ) : (
-          <main className="flex-1 overflow-y-auto p-6 lg:p-8">
-            <div className="grid gap-5 mb-5" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-              <TodayCountCard count={todayCount}     hourlyData={hourlyData} />
-              <StaffUsageCard data={staffCounts}     total={staffTotal} />
-              <CategoryCard   data={categoryCounts} />
+          </div>
+          <p className="mt-3 text-[11px] text-center" style={{ color: 'rgba(245,240,232,0.3)' }}>名前を選択すると検索できます</p>
+        </div>
+
+        <div className="glass-card rounded-3xl p-5 mb-4">
+          <div className="flex items-center gap-2.5 mb-4">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.2)' }}><Search size={13} style={{ color: '#D4A843' }} /></div>
+            <span className="text-[13px] font-semibold" style={{ color: 'rgba(245,240,232,0.9)' }}>マニュアルを検索</span>
+          </div>
+          <div className="relative mb-3">
+            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'rgba(212,168,67,0.4)' }} />
+            <input type="text" className="gold-input w-full rounded-2xl pl-9 pr-4 py-3.5 text-[14px] transition-all" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(212,168,67,0.18)', color: '#F5F0E8' }} placeholder="例：レジ締め、チヂミ、ドリンク提供ルール" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleKeyDown} disabled={!selectedStaff} />
+          </div>
+          <button className="gold-button w-full rounded-2xl py-4 flex items-center justify-center gap-2 text-[14px] font-semibold tracking-wide transition-all" style={{ color: isSearchable ? '#1a0f04' : 'rgba(180,130,30,0.4)' }} onClick={handleSearch} disabled={!isSearchable || loading}>
+            {loading ? <><Loader2 size={15} className="animate-spin" /><span>検索中...</span></> : <><Search size={15} /><span>検索する</span></>}
+          </button>
+          {!selectedStaff && <div className="mt-3 flex items-center justify-center gap-1.5"><Lock size={10} style={{ color: 'rgba(245,240,232,0.25)' }} /><p className="text-[11px]" style={{ color: 'rgba(245,240,232,0.25)' }}>名前を選択すると検索できます</p></div>}
+        </div>
+
+        {(loading || searched) && (
+          <div className="glass-card rounded-3xl p-5">
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'rgba(212,168,67,0.1)', border: '1px solid rgba(212,168,67,0.2)' }}><FileText size={13} style={{ color: '#D4A843' }} /></div>
+              <span className="text-[13px] font-semibold" style={{ color: 'rgba(245,240,232,0.9)' }}>検索結果</span>
+              {searched && !loading && manuals.length > 0 && <span className="ml-auto text-[11px]" style={{ color: 'rgba(212,168,67,0.5)' }}>{manuals.length}件</span>}
             </div>
-            <div className="grid gap-5" style={{ gridTemplateColumns: '1fr 1.6fr' }}>
-              <ManualSearch staffs={staffs} onSearchComplete={handleSearchComplete} />
-              <RecentLogsCard />
-            </div>
-          </main>
+            {loading && <div className="space-y-3"><CardSkeleton /><CardSkeleton /></div>}
+            {!loading && searched && manuals.length > 0 && <div className="space-y-3">{manuals.map((manual, i) => <ManualCard key={manual.id} manual={manual} index={i} />)}</div>}
+            {!loading && searched && manuals.length === 0 && <EmptyState />}
+          </div>
         )}
+
+        <div className="mt-8 flex items-center justify-center gap-1.5">
+          <Shield size={10} style={{ color: 'rgba(212,168,67,0.25)' }} />
+          <p className="text-[10px] tracking-wide" style={{ color: 'rgba(245,240,232,0.2)' }}>検索内容は改善のため記録されます</p>
+        </div>
       </div>
     </div>
   )
